@@ -8,7 +8,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from xml.etree.ElementTree import ParseError
 
 from .arxiv import Arxiv, parse_feed
+from .model import Model
 from .ranking import load_config, rank
+from .reading import add_note, export_notes, paragraphs, prepare, translate
 from .store import Paper, connect, get_paper, save_papers, setting, versions
 
 
@@ -83,6 +85,23 @@ def parser():
     status.add_argument("value", choices=("unread", "read", "skipped"))
     commands.add_parser("pause", help="Pause weekly recommendations")
     commands.add_parser("resume", help="Allow the next weekly recommendation")
+    for name, help_text in (
+        ("prepare", "Download and parse a selected paper version"),
+        ("translate", "Translate selected paragraph anchors"),
+        ("note", "Save a Markdown note"),
+        ("export-notes", "Export paper notes as Markdown"),
+    ):
+        command = commands.add_parser(name, help=help_text)
+        command.add_argument("id")
+        command.add_argument("--version", type=positive)
+    commands.choices["prepare"].add_argument("--pdf", type=Path, help="Use an existing local PDF")
+    commands.choices["translate"].add_argument("anchors", nargs="+")
+    commands.choices["note"].add_argument("text")
+    commands.choices["note"].add_argument("--anchor", default="")
+    commands.choices["export-notes"].add_argument("path", type=Path)
+    reader = commands.add_parser("reader", help="Open the desktop reader")
+    reader.add_argument("id", nargs="?")
+    reader.add_argument("--version", type=positive)
     return cli
 
 
@@ -111,6 +130,30 @@ def execute(args, db, config, today):
         case "pause" | "resume":
             db.execute("INSERT OR REPLACE INTO settings VALUES ('paused', ?)", (str(int(args.command == "pause")),))
             return {"status": args.command}
+        case "prepare":
+            return prepare(db, args.db.parent, get_paper(db, args.id, args.version), args.pdf)
+        case "translate":
+            paper = get_paper(db, args.id, args.version)
+            available = {row["anchor"]: row for row in paragraphs(db, paper)}
+            if missing := set(args.anchors) - available.keys():
+                raise ValueError(f"Unknown paragraph anchors: {', '.join(sorted(missing))}")
+            model = Model.from_env()
+            results = {}
+            for anchor in args.anchors:
+                results[anchor] = translate(db, paper, available[anchor], model)
+                db.commit()
+            return results
+        case "note":
+            paper = get_paper(db, args.id, args.version)
+            if args.anchor and args.anchor not in {row["anchor"] for row in paragraphs(db, paper)}:
+                raise ValueError(f"Unknown paragraph anchor: {args.anchor}")
+            if not args.text.strip():
+                raise ValueError("A note cannot be empty")
+            return {"note_id": add_note(db, paper, args.anchor, args.text)}
+        case "export-notes":
+            paper = get_paper(db, args.id, args.version)
+            args.path.write_text(export_notes(db, paper), encoding="utf-8")
+            return {"path": str(args.path.resolve())}
 
 
 def main(argv=None):
@@ -118,6 +161,12 @@ def main(argv=None):
     try:
         config = load_config(args.config)
         today = datetime.now(ZoneInfo(config["timezone"])).date()
+        if args.command == "reader":
+            try:
+                from .desktop import run
+            except ImportError as error:
+                raise ValueError("Install pread[reader] to open the desktop reader") from error
+            return run(args.db, args.id, args.version, today)
         with connect(args.db) as db:
             result = execute(args, db, config, today)
         output(result)

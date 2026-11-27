@@ -64,6 +64,44 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS document (
+    id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    PRIMARY KEY (id, version),
+    FOREIGN KEY (id, version) REFERENCES paper_version(id, version)
+);
+CREATE TABLE IF NOT EXISTS paragraph (
+    id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    ordinal INTEGER NOT NULL,
+    anchor TEXT NOT NULL,
+    page INTEGER NOT NULL,
+    section TEXT NOT NULL,
+    text TEXT NOT NULL,
+    PRIMARY KEY (id, version, anchor),
+    FOREIGN KEY (id, version) REFERENCES document(id, version)
+);
+CREATE TABLE IF NOT EXISTS translation (
+    cache_key TEXT PRIMARY KEY,
+    text TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS reading_progress (
+    id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    anchor TEXT NOT NULL,
+    seconds INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (id, version),
+    FOREIGN KEY (id, version) REFERENCES paper_version(id, version)
+);
+CREATE TABLE IF NOT EXISTS note (
+    note_id INTEGER PRIMARY KEY,
+    id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    anchor TEXT NOT NULL,
+    text TEXT NOT NULL,
+    FOREIGN KEY (id, version) REFERENCES paper_version(id, version)
+);
 """
 
 
