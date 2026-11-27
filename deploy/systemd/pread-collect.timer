@@ -1,0 +1,9 @@
+[Unit]
+Description=Collect Pread markers each Friday
+
+[Timer]
+OnCalendar=Fri *-*-* 08:00:00 Asia/Shanghai
+Persistent=true
+
+[Install]
+WantedBy=timers.target

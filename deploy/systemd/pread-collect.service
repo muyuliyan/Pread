@@ -1,0 +1,12 @@
+[Unit]
+Description=Collect arXiv metadata for Pread
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/.local/share/pread
+ExecStart=%h/.local/share/pread/.venv/bin/research --db catalog.db collect --days 30 --limit 1500
+ExecStart=%h/.local/share/pread/.venv/bin/research --db catalog.db export-markers --days 90 --output markers.json
+Nice=10
+MemoryHigh=128M
+MemoryMax=192M
+TimeoutStartSec=20min

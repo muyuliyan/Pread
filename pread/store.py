@@ -150,10 +150,10 @@ def get_paper(db, paper_id, version=None):
     return Paper(**json.loads(row["payload"]))
 
 
-def versions(db):
-    return [json.loads(row[0]) for row in db.execute(
-        "SELECT payload FROM paper_version ORDER BY id, version"
-    )]
+def versions(db, since="0001-01-01"):
+    return db.execute(
+        "SELECT payload FROM paper_version WHERE published >= ? ORDER BY id, version", (since,)
+    )
 
 
 def setting(db, key):

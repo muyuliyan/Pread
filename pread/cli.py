@@ -1,9 +1,10 @@
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from pathlib import Path
 import sqlite3
 import sys
+from tempfile import NamedTemporaryFile
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from xml.etree.ElementTree import ParseError
 
@@ -42,6 +43,42 @@ def collect(args, db, config):
     return total
 
 
+def import_markers(db, path):
+    with path.open(encoding="utf-8-sig") as stream:
+        snapshot = json.load(stream)
+    if not isinstance(snapshot, dict) or snapshot.get("format") != 1 or not isinstance(snapshot.get("versions"), list):
+        raise ValueError("Unsupported marker format")
+    markers = snapshot["versions"]
+    save_papers(db, (Paper(**item) for item in markers))
+    return {"imported": len(markers)}
+
+
+def write_markers(db, stream, since):
+    stream.write('{"format":1,"versions":[\n')
+    separator = ""
+    for row in versions(db, since):
+        stream.write(separator)
+        stream.write(row[0])
+        separator = ",\n"
+    stream.write("\n]}\n")
+
+
+def export_markers(db, path, since):
+    if path is None:
+        write_markers(db, sys.stdout, since)
+        return
+    temporary = None
+    try:
+        with NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
+                                dir=path.parent, suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            write_markers(db, stream, since)
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def external_search(query, limit):
     return [dict(id=paper.id, version=paper.version, title=paper.title, url=paper.url,
                  abstract=paper.abstract, published=paper.published)
@@ -56,7 +93,10 @@ def ensure_week(db, args, config, today):
     previous = db.execute("SELECT payload FROM recommendation WHERE week = ?", (week,)).fetchone()
     if previous:
         return json.loads(previous[0])
-    if not args.no_collect:
+    if getattr(args, "markers", None):
+        import_markers(db, args.markers)
+        db.commit()
+    elif not args.no_collect:
         collect(args, db, config)
     if getattr(args, "calibrate", False):
         config = calibrated_config(db, config)
@@ -102,7 +142,10 @@ def parser():
     weekly.add_argument("--review", action="store_true", help="Download and assess up to five candidates with the configured model")
     weekly.add_argument("--calibrate", action="store_true", help="Use topic preferences calibrated from reading feedback")
     weekly.add_argument("--no-collect", action="store_true", help="Use the existing local catalog")
-    commands.add_parser("export-markers", help="Write version metadata as JSON to stdout")
+    weekly.add_argument("--markers", type=Path, help="Import a metadata snapshot as the weekly collection step")
+    export = commands.add_parser("export-markers", help="Stream version metadata as JSON")
+    export.add_argument("--output", type=Path, help="Atomically replace this file instead of writing to stdout")
+    export.add_argument("--days", type=positive, help="Only include papers submitted within this many days")
     commands.add_parser("import-markers", help="Import version metadata as JSON").add_argument("path", type=Path)
     status = commands.add_parser("status", help="Include or exclude a paper from future ranking")
     status.add_argument("id")
@@ -170,17 +213,20 @@ def execute(args, db, config, today):
                 return rerank(rank(db, config, today, args.days, max(20, args.top), args.semantic), config)[:args.top]
             return rank(db, config, today, args.days, args.top, args.semantic)
         case "weekly":
+            if args.markers and args.atom:
+                raise ValueError("--markers and --atom are mutually exclusive")
             return ensure_week(db, args, config, today)
         case "export-markers":
-            return {"format": 1, "versions": versions(db)}
+            if args.output:
+                database = args.db.resolve()
+                protected = {Path(f"{database}{suffix}") for suffix in ("", "-wal", "-shm", "-journal")}
+                if args.output.resolve() in protected:
+                    raise ValueError("Marker output must not overwrite the SQLite catalog or its sidecar files")
+            since = (today - timedelta(days=args.days)).isoformat() if args.days else "0001-01-01"
+            export_markers(db, args.output, since)
+            return None
         case "import-markers":
-            with args.path.open(encoding="utf-8-sig") as stream:
-                snapshot = json.load(stream)
-            if not isinstance(snapshot, dict) or snapshot.get("format") != 1 or not isinstance(snapshot.get("versions"), list):
-                raise ValueError("Unsupported marker format")
-            papers = [Paper(**item) for item in snapshot["versions"]]
-            save_papers(db, papers)
-            return {"imported": len(papers)}
+            return import_markers(db, args.path)
         case "status":
             get_paper(db, args.id)
             db.execute("INSERT OR REPLACE INTO paper_state VALUES (?, ?)", (args.id, args.value))
@@ -258,8 +304,9 @@ def main(argv=None):
             return run(args.db, args.id, args.version, today, config)
         with connect(args.db) as db:
             result = execute(args, db, config, today)
-        output(result)
+        if result is not None:
+            output(result)
         return 0
-    except (OSError, ValueError, TypeError, KeyError, sqlite3.Error, ParseError, ZoneInfoNotFoundError) as error:
+    except (OSError, ValueError, OverflowError, TypeError, KeyError, sqlite3.Error, ParseError, ZoneInfoNotFoundError) as error:
         print(f"research: {error}", file=sys.stderr)
         return 1

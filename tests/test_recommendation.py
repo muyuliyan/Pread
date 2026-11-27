@@ -10,7 +10,7 @@ import unittest
 from urllib.error import HTTPError
 
 from pread.arxiv import Arxiv, parse_feed
-from pread.cli import ensure_week, main
+from pread.cli import ensure_week, export_markers, main
 from pread.ranking import load_config, rank, score_signals
 from pread.store import Paper, connect, latest_papers, save_papers
 
@@ -92,3 +92,18 @@ class RecommendationTests(unittest.TestCase):
 
     def test_coverage_keeps_unknown_distinct_from_zero(self):
         self.assertEqual(score_signals({"a": 0, "b": None}, {"a": .3, "b": .7}), (0, .3))
+
+    def test_filtered_snapshot_handoff_is_idempotent(self):
+        export_path = self.directory / "markers.json"
+        local = self.directory / "local.db"
+        older = replace(self.paper, id="2510.10001", published="2025-10-01")
+        with connect(self.db_path) as db:
+            save_papers(db, [older, self.paper])
+            export_markers(db, export_path, "2025-12-04")
+        self.assertEqual(len(json.loads(export_path.read_text())["versions"]), 1)
+        with connect(local) as db:
+            args = Namespace(markers=export_path, no_collect=False, days=30, semantic=False)
+            result = ensure_week(db, args, self.config, self.today)
+            self.assertEqual(result["primary"]["id"], self.paper.id)
+            export_path.unlink()
+            self.assertEqual(ensure_week(db, args, self.config, self.today), result)

@@ -20,6 +20,8 @@ python -m unittest discover -s tests -v
 
 单核 VPS 可运行 research collect，再用 research export-markers 导出 JSON。将文件传到本地后，用 research import-markers PATH 导入版本记录。在 Linux 上可用每周定时器运行采集。源数据收集和本地推荐可分别触发。
 
+仓库提供 Windows 计划任务注册脚本和 Debian systemd 用户单元，也支持用快照直接生成周推荐。 [定时采集与本地推荐](docs/deployment.md)
+
 ## 双语阅读器
 
 ~~~sh
