@@ -63,3 +63,15 @@ review 使用已准备的 PDF。weekly --review 会为本周最多五篇候选�
 安装 pread[semantic] 后，可用 --rerank 加入本地二次排序。默认模型为 [BGE Reranker v2 M3](https://huggingface.co/BAAI/bge-reranker-v2-m3)，可通过 TOML 的 reranker_model 指定模型名或本地目录。
 
 related 提供基于共享词汇的候选关联，也显示手工添加并有出处的论文关系。lookup --external 会在本地证据不足时联网查询 arXiv，返回论文元数据和链接。
+
+## 外部证据
+
+~~~sh
+research enrich ARXIV_ID
+research enrich ARXIV_ID --github-repo OWNER/REPO --openreview-id FORUM_ID --openalex-id W123
+research evidence ARXIV_ID
+~~~
+
+enrich 默认按 arXiv ID 查询 Semantic Scholar 和 Hugging Face Papers。可提供已知的 GitHub、OpenReview 或 OpenAlex 标识来补充代码仓库、公开审稿或引文元数据。用 --source 限定查询来源。可用 PREAD_S2_KEY 和 PREAD_OPENALEX_KEY 配置对应服务的访问凭据。
+
+引用量和社区投票按对数缩放后纳入低权重影响力指标，推荐卡保留来源链接。GitHub 星标和审稿结论仅作为参考信息。各来源可单独失败，已有记录仍可读取。

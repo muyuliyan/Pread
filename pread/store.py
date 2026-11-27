@@ -64,6 +64,12 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS paper_evidence (
+    id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    PRIMARY KEY (id, source)
+);
 CREATE TABLE IF NOT EXISTS document (
     id TEXT NOT NULL,
     version INTEGER NOT NULL,
@@ -159,3 +165,12 @@ def versions(db, since="0001-01-01"):
 def setting(db, key):
     row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
     return row[0] if row else None
+
+
+def paper_evidence(db, paper_id=None):
+    rows = db.execute("""SELECT id, source, payload FROM paper_evidence
+        WHERE ? IS NULL OR id = ? ORDER BY id, source""", (paper_id, paper_id))
+    results = {}
+    for row in rows:
+        results.setdefault(row["id"], {})[row["source"]] = json.loads(row["payload"])
+    return results

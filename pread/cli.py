@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from xml.etree.ElementTree import ParseError
 
 from .arxiv import Arxiv, parse_feed
+from .evidence import SOURCES, enrich
 from .knowledge import add_term, answer
 from .model import Model
 from .personalization import (
@@ -16,7 +17,7 @@ from .personalization import (
 )
 from .ranking import load_config, rank, rerank
 from .reading import add_note, export_notes, paragraphs, prepare, translate
-from .store import Paper, connect, get_paper, save_papers, setting, versions
+from .store import Paper, connect, get_paper, paper_evidence, save_papers, setting, versions
 
 
 def positive(value):
@@ -201,6 +202,13 @@ def parser():
     link_command = commands.add_parser("link", help="Record a paper relationship with supporting evidence")
     for field in ("source", "target", "relation", "evidence"):
         link_command.add_argument(field)
+    extra = commands.add_parser("enrich", help="Collect optional public evidence for a known paper")
+    extra.add_argument("id")
+    extra.add_argument("--source", choices=SOURCES, action="append")
+    extra.add_argument("--github-repo")
+    extra.add_argument("--openreview-id")
+    extra.add_argument("--openalex-id")
+    commands.add_parser("evidence", help="Show saved public evidence").add_argument("id")
     return cli
 
 
@@ -289,6 +297,14 @@ def execute(args, db, config, today):
         case "link":
             link(db, args.source, args.target, args.relation, args.evidence)
             return {"source": args.source, "target": args.target, "relation": args.relation}
+        case "enrich":
+            paper = get_paper(db, args.id)
+            identifiers = {"github": args.github_repo, "openreview": args.openreview_id, "openalex": args.openalex_id}
+            sources = args.source or ["semantic-scholar", "hugging-face", *(k for k, v in identifiers.items() if v)]
+            return enrich(db, paper, sources, identifiers)
+        case "evidence":
+            get_paper(db, args.id)
+            return paper_evidence(db, args.id).get(args.id, {})
 
 
 def main(argv=None):

@@ -4,7 +4,7 @@ import math
 import re
 import tomllib
 
-from .store import latest_papers
+from .store import latest_papers, paper_evidence
 
 
 def load_config(path=None):
@@ -66,6 +66,16 @@ def score_signals(values, weights):
     return (score / coverage if coverage else 0.0), coverage
 
 
+def impact(evidence):
+    citations = evidence.get("semantic-scholar", {}).get("citations")
+    if citations is None:
+        citations = evidence.get("openalex", {}).get("citations")
+    upvotes = evidence.get("hugging-face", {}).get("upvotes")
+    values = [min(1.0, math.log1p(value) / math.log1p(100))
+              for value in (citations, upvotes) if type(value) is int and value >= 0]
+    return math.fsum(values) / len(values) if values else None
+
+
 def rerank(cards, config, model=None):
     if not cards:
         return []
@@ -110,13 +120,15 @@ def rank(db, config, today: date, days=30, top=20, semantic=False):
         ))
         papers = shortlist
     cards = []
+    evidence_by_id = paper_evidence(db)
     for paper in papers:
         relevance_score, topic = semantic_by_id.get(paper.id, keyword[paper.id])
         age = (today - date.fromisoformat(paper.published)).days
         minutes = [180, 240] if len(tokens(paper.abstract)) <= 250 else [210, 280]
         signals = dict.fromkeys(config["weights"])
+        evidence = evidence_by_id.get(paper.id, {})
         signals.update(relevance=relevance_score, freshness=2 ** (-age / config["half_life_days"]),
-                       reading_fit=min(1.0, 240 / minutes[-1]))
+                       reading_fit=min(1.0, 240 / minutes[-1]), impact=impact(evidence))
         score, coverage = score_signals(signals, config["weights"])
         cards.append(dict(
             id=paper.id, version=paper.version, title=paper.title, url=paper.url,
@@ -124,4 +136,6 @@ def rank(db, config, today: date, days=30, top=20, semantic=False):
             topic=topic, score=round(score, 6), coverage=round(coverage, 6), signals=signals,
             estimated_read_minutes=minutes, needs_review=coverage < .75,
         ))
+        if evidence:
+            cards[-1]["public_evidence"] = {source: item["url"] for source, item in evidence.items()}
     return sorted(cards, key=lambda card: (-card["score"], card["id"]))[:top]
