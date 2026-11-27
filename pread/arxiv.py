@@ -87,3 +87,11 @@ class Arxiv:
             yield page
             if len(page) < page_size:
                 break
+
+    def search(self, query, limit):
+        words = list(dict.fromkeys(re.findall(r"[\w-]+", query)))[:12]
+        if not words:
+            raise ValueError("arXiv search needs at least one word")
+        params = urlencode({"search_query": " AND ".join(f'all:"{word}"' for word in words),
+                            "start": 0, "max_results": limit, "sortBy": "relevance"})
+        return self.fetch(f"{API_URL}?{params}")

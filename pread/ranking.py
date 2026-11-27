@@ -66,6 +66,34 @@ def score_signals(values, weights):
     return (score / coverage if coverage else 0.0), coverage
 
 
+def rerank(cards, config, model=None):
+    if not cards:
+        return []
+    if model is None:
+        try:
+            from sentence_transformers import CrossEncoder
+            from torch.nn import Sigmoid
+        except ImportError as error:
+            raise ValueError("Install pread[semantic] to use the reranker") from error
+        model = CrossEncoder(config["reranker_model"], trust_remote_code=False, activation_fn=Sigmoid())
+    topics = config["topics"]
+    pairs = [
+        (", ".join(topics[card["topic"]]["keywords"]), f"{card['title']}\n{card['abstract']}")
+        for card in cards
+    ]
+    reordered = []
+    for card, probability in zip(cards, model.predict(pairs), strict=True):
+        probability = float(probability)
+        if not math.isfinite(probability) or not 0 <= probability <= 1:
+            raise ValueError("Reranker score must be between zero and one")
+        weighted = topics[card["topic"]]["weight"] * probability
+        signals = card["signals"] | {"relevance": .65 * card["signals"]["relevance"] + .35 * weighted}
+        score, coverage = score_signals(signals, config["weights"])
+        reordered.append(card | {"signals": signals, "reranker_relevance": round(weighted, 6),
+                                 "score": round(score, 6), "coverage": round(coverage, 6)})
+    return sorted(reordered, key=lambda card: (-card["score"], card["id"]))
+
+
 def rank(db, config, today: date, days=30, top=20, semantic=False):
     papers = latest_papers(db, (today - timedelta(days=days)).isoformat())
     papers = [paper for paper in papers if date.fromisoformat(paper.published) <= today]

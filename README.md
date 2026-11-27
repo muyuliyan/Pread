@@ -43,3 +43,21 @@ research lookup "实验使用了哪些 GPU" --paper ARXIV_ID --semantic --explai
 点击阅读器的“查询”打开悬浮窗口，默认查询当前论文，可切换为全库。精确术语优先返回本地术语表，其他查询返回 FTS5 段落与页码。安装 pread[semantic] 后可以融合向量结果。“带出处解释”只将问题与检索到的段落发送给已配置的模型。
 
 Windows 全局快捷键默认为 Ctrl+Shift+P（显示或隐藏）、K（查询）、T（翻译）、E（解释）、N（笔记）。可在 TOML 的 [hotkeys] 下用 reader、lookup、translate、explain、note 分别设置字母、数字或 false。Esc 隐藏查询窗口，其他应用的文本可手动复制粘贴到查询框。
+
+## 审稿、阅读反馈与论文关联
+
+~~~sh
+research review ARXIV_ID
+research weekly --semantic --rerank --review --calibrate
+research feedback 2026-W48 ARXIV_ID --minutes 210 --relevance 5 --understanding 4 --quality 4 --completed
+research feedback-report
+research related ARXIV_ID
+research link SOURCE_ID TARGET_ID "比较基线" "Results, p. 6"
+research research-search "FlashAttention"
+~~~
+
+review 使用已准备的 PDF。weekly --review 会为本周最多五篇候选取回 PDF，并向已配置的模型发送精选摘录与相关先前论文的摘要。审稿引用与摘录逐字核对，再将有效的分项分数纳入排序。失败的候选保留基础评分，可查看失败原因。已生成的周推荐可重复读取。使用 --calibrate 时，收集至少四周反馈后才会小幅调整主题权重。
+
+安装 pread[semantic] 后，可用 --rerank 加入本地二次排序。默认模型为 [BGE Reranker v2 M3](https://huggingface.co/BAAI/bge-reranker-v2-m3)，可通过 TOML 的 reranker_model 指定模型名或本地目录。
+
+related 提供基于共享词汇的候选关联，也显示手工添加并有出处的论文关系。lookup --external 会在本地证据不足时联网查询 arXiv，返回论文元数据和链接。

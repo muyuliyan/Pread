@@ -2,6 +2,7 @@ timezone = "Asia/Shanghai"
 categories = ["cs.DC", "cs.PF", "cs.AR", "cs.LG", "cs.CL", "cs.AI", "cs.CV", "cs.NE", "cs.OS"]
 half_life_days = 30
 embedding_model = "BAAI/bge-m3"
+reranker_model = "BAAI/bge-reranker-v2-m3"
 
 [weights]
 relevance = 0.30
