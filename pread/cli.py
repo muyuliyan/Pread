@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from xml.etree.ElementTree import ParseError
 
 from .arxiv import Arxiv, parse_feed
+from .knowledge import add_term, answer
 from .model import Model
 from .ranking import load_config, rank
 from .reading import add_note, export_notes, paragraphs, prepare, translate
@@ -102,6 +103,16 @@ def parser():
     reader = commands.add_parser("reader", help="Open the desktop reader")
     reader.add_argument("id", nargs="?")
     reader.add_argument("--version", type=positive)
+    lookup = commands.add_parser("lookup", help="Find glossary entries or cited paper passages")
+    lookup.add_argument("query")
+    lookup.add_argument("--paper")
+    lookup.add_argument("--version", type=positive)
+    lookup.add_argument("--top", type=positive, default=5)
+    lookup.add_argument("--semantic", action="store_true")
+    lookup.add_argument("--explain", action="store_true", help="Send retrieved excerpts to the configured model")
+    glossary = commands.add_parser("glossary-add", help="Save a definition with its source")
+    for field in ("term", "definition", "source"):
+        glossary.add_argument(field)
     return cli
 
 
@@ -154,6 +165,15 @@ def execute(args, db, config, today):
             paper = get_paper(db, args.id, args.version)
             args.path.write_text(export_notes(db, paper), encoding="utf-8")
             return {"path": str(args.path.resolve())}
+        case "glossary-add":
+            add_term(db, args.term, args.definition, args.source)
+            return {"term": args.term}
+        case "lookup":
+            if args.version and not args.paper:
+                raise ValueError("--version requires --paper")
+            paper = get_paper(db, args.paper, args.version) if args.paper else None
+            return answer(db, args.query, paper, model=Model.from_env if args.explain else None,
+                          model_name=config["embedding_model"] if args.semantic else None, limit=min(args.top, 50))
 
 
 def main(argv=None):
@@ -166,7 +186,7 @@ def main(argv=None):
                 from .desktop import run
             except ImportError as error:
                 raise ValueError("Install pread[reader] to open the desktop reader") from error
-            return run(args.db, args.id, args.version, today)
+            return run(args.db, args.id, args.version, today, config)
         with connect(args.db) as db:
             result = execute(args, db, config, today)
         output(result)

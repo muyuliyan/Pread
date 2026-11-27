@@ -31,3 +31,15 @@ research reader ARXIV_ID
 也可以在阅读器里选论文并点击“准备 PDF”。原始 PDF 以版本和 SHA-256 保存。段落列表和目录可定位原文、译文及 PDF 页。公式、图表和扫描页以原版 PDF 查看。阅读进度和 Markdown 笔记保存在本地。
 
 模型连接可配置 PREAD_LLM_URL（OpenAI 兼容服务的 API 基础地址，通常以 /v1 结尾）、PREAD_LLM_MODEL 和可选的 PREAD_LLM_KEY。点击“翻译当前段”或执行 research translate ARXIV_ID ANCHOR 时，当前段落发送给所配置的模型，已有译文按版本、段落内容与模型复用。
+
+## 即时查询
+
+~~~sh
+research glossary-add "Persistent Kernel" "在多项任务完成前持续运行的内核" "本地笔记 / GPU Kernel"
+research lookup "Persistent Kernel" --paper ARXIV_ID
+research lookup "实验使用了哪些 GPU" --paper ARXIV_ID --semantic --explain
+~~~
+
+点击阅读器的“查询”打开悬浮窗口，默认查询当前论文，可切换为全库。精确术语优先返回本地术语表，其他查询返回 FTS5 段落与页码。安装 pread[semantic] 后可以融合向量结果。“带出处解释”只将问题与检索到的段落发送给已配置的模型。
+
+Windows 全局快捷键默认为 Ctrl+Shift+P（显示或隐藏）、K（查询）、T（翻译）、E（解释）、N（笔记）。可在 TOML 的 [hotkeys] 下用 reader、lookup、translate、explain、note 分别设置字母、数字或 false。Esc 隐藏查询窗口，其他应用的文本可手动复制粘贴到查询框。

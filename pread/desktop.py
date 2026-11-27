@@ -3,13 +3,17 @@ from pathlib import Path
 from time import monotonic
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Qt, Signal, Slot
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QListWidget,
-    QMainWindow, QPushButton, QSplitter, QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
+    QMainWindow, QMenu, QPushButton, QSplitter, QStackedWidget, QStyle, QSystemTrayIcon,
+    QTextEdit, QVBoxLayout, QWidget,
 )
 
+from .hotkeys import DEFAULT_KEYS, GlobalHotkeys
+from .lookup_window import LookupWindow
 from .model import Model
 from .reading import (
     add_note, export_notes, get_document, paragraphs, pdf_path, prepare, progress, save_progress, translate,
@@ -35,7 +39,7 @@ class Job(QRunnable):
 
 
 class Reader(QMainWindow):
-    def __init__(self, db_path, paper_id=None, version=None, today=None):
+    def __init__(self, db_path, paper_id=None, version=None, today=None, config=None):
         super().__init__()
         self.db_path = db_path
         self.root = db_path.parent
@@ -45,6 +49,10 @@ class Reader(QMainWindow):
         self.timing = True
         self.elapsed = 0
         self.busy = False
+        config = config or {}
+        self.embedding_model = config.get("embedding_model", "BAAI/bge-m3")
+        self.lookup_window = LookupWindow(self)
+        self.hotkeys = None
         self.setWindowTitle("Pread · 双语论文精读")
         self.resize(1120, 740)
         body = QWidget()
@@ -58,7 +66,7 @@ class Reader(QMainWindow):
         toolbar.addWidget(self.library, 1)
         for label, action in (
             ("准备 PDF", self.prepare_paper), ("翻译当前段", self.translate_current),
-            ("添加笔记", self.note), ("导出笔记", self.export),
+            ("添加笔记", self.note), ("导出笔记", self.export), ("查询", self.open_lookup),
         ):
             button = QPushButton(label)
             button.clicked.connect(action)
@@ -133,6 +141,79 @@ class Reader(QMainWindow):
             self.library.setCurrentIndex(next(index for index, (paper, _) in enumerate(ordered) if paper == chosen))
         self.library.blockSignals(False)
         self.open_paper(self.library.currentIndex())
+        self.setup_desktop_actions(config.get("hotkeys", {}))
+
+    def setup_desktop_actions(self, keys):
+        app = QApplication.instance()
+        actions = {"reader": self.toggle_window, "lookup": self.open_lookup,
+                   "translate": self.translate_selection, "explain": self.explain_selection, "note": self.note}
+        self.hotkeys = GlobalHotkeys(app, self, actions, keys)
+        for number, (name, action) in enumerate(actions.items(), 1):
+            key = keys.get(name, DEFAULT_KEYS[name])
+            if key and number not in self.hotkeys.registered and name not in self.hotkeys.failed:
+                shortcut = QShortcut(QKeySequence(f"Ctrl+Shift+{key}"), self)
+                shortcut.activated.connect(action)
+        if self.hotkeys.failed:
+            self.statusBar().showMessage(f"快捷键不可用：{', '.join(self.hotkeys.failed)}", 10000)
+        self.tray = None
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView)
+            self.tray = QSystemTrayIcon(icon, self)
+            menu = QMenu(self)
+            menu.addAction("显示或隐藏阅读器", self.toggle_window)
+            menu.addAction("查询", self.open_lookup)
+            menu.addAction("退出", self.close)
+            self.tray.setContextMenu(menu)
+            self.tray.show()
+
+    def toggle_window(self):
+        if self.isVisible() and not self.isMinimized():
+            self.flush_progress()
+            self.hidden_at = monotonic()
+            if self.tray is not None or self.hotkeys.registered:
+                self.hide()
+            else:
+                self.showMinimized()
+        else:
+            if hasattr(self, "hidden_at"):
+                self.started += monotonic() - self.hidden_at
+                del self.hidden_at
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+
+    def selected_text(self):
+        for pane in (self.original, self.translated):
+            if pane.hasFocus() and pane.textCursor().hasSelection():
+                return pane.textCursor().selectedText()
+        return ""
+
+    def open_lookup(self):
+        self.lookup_window.show_query(self.selected_text())
+
+    def translate_selection(self):
+        text = self.selected_text()
+        self.lookup_window.show_query(text)
+        if text:
+            self.lookup_window.translate()
+
+    def explain_selection(self):
+        text = self.selected_text()
+        self.lookup_window.show_query(text)
+        if text:
+            self.lookup_window.explain()
+
+    def locate(self, source):
+        for index in range(self.library.count()):
+            paper = self.library.itemData(index)
+            if (paper.id, paper.version) == (source["id"], source["version"]):
+                self.library.setCurrentIndex(index)
+                for row, paragraph in enumerate(self.rows):
+                    if paragraph["anchor"] == source["anchor"]:
+                        self.paragraph_list.setCurrentRow(row)
+                        return True
+                break
+        return False
 
     @staticmethod
     def text_pane():
@@ -149,7 +230,7 @@ class Reader(QMainWindow):
                             f"{max(0, self.budget.currentData() - seconds // 60)} 分钟")
 
     def current_seconds(self):
-        return int(monotonic() - self.started) if self.timing else 0
+        return int(monotonic() - self.started) if self.timing and not hasattr(self, "hidden_at") else 0
 
     def toggle_timer(self):
         self.flush_progress()
@@ -233,16 +314,18 @@ class Reader(QMainWindow):
         self.original.setVisible(mode != 2)
         self.translated.setVisible(mode != 1)
 
-    def start_job(self, operation, completed):
+    def start_job(self, operation, completed, failed=None):
         if self.busy:
-            return
+            return False
         self.busy = True
         self.library.setEnabled(False)
         self.statusBar().showMessage("后台处理中…")
         self.job = Job(operation)
         self.job_done = completed
+        self.job_failed = failed
         self.job.signals.done.connect(self.finish_job)
         QThreadPool.globalInstance().start(self.job)
+        return True
 
     @Slot(object)
     def finish_job(self, result):
@@ -252,6 +335,8 @@ class Reader(QMainWindow):
         self.statusBar().showMessage("已完成" if succeeded else data, 10000)
         if succeeded:
             self.job_done(data)
+        elif self.job_failed:
+            self.job_failed(data)
 
     def prepare_paper(self):
         if self.paper is None:
@@ -306,12 +391,17 @@ class Reader(QMainWindow):
             self.statusBar().showMessage("已导出笔记", 5000)
 
     def closeEvent(self, event):
+        if self.hotkeys:
+            self.hotkeys.close()
+        if self.tray:
+            self.tray.hide()
+        self.document.close()
         self.flush_progress()
         super().closeEvent(event)
 
 
-def run(db_path, paper_id, version, today):
+def run(db_path, paper_id, version, today, config):
     app = QApplication([])
-    window = Reader(db_path, paper_id, version, today)
+    window = Reader(db_path, paper_id, version, today, config)
     window.show()
     return app.exec()

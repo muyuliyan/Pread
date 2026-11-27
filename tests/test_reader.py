@@ -84,6 +84,7 @@ class ReaderTests(unittest.TestCase):
     def test_desktop_navigation_pdf_and_modes(self):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         try:
+            from PySide6.QtTest import QTest
             from PySide6.QtWidgets import QApplication
             from pread.desktop import Reader
         except ImportError:
@@ -102,4 +103,15 @@ class ReaderTests(unittest.TestCase):
         self.assertTrue(window.original.isHidden())
         window.modes.setCurrentIndex(3)
         self.assertEqual(window.views.currentWidget(), window.pdf)
-        window.close()
+        window.lookup_window.query.setText("throughput")
+        window.lookup_window.lookup()
+        for _ in range(100):
+            if not window.busy:
+                break
+            QTest.qWait(20)
+        self.assertEqual(window.lookup_window.sources.count(), 1)
+        window.lookup_window.open_source(window.lookup_window.sources.item(0))
+        self.assertEqual(window.paragraph_list.currentRow(), 0)
+        self.assertTrue(window.close())
+        window.deleteLater()
+        QTest.qWait(50)
