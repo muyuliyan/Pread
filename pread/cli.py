@@ -1,0 +1,127 @@
+import argparse
+from datetime import datetime
+import json
+from pathlib import Path
+import sqlite3
+import sys
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from xml.etree.ElementTree import ParseError
+
+from .arxiv import Arxiv, parse_feed
+from .ranking import load_config, rank
+from .store import Paper, connect, get_paper, save_papers, setting, versions
+
+
+def positive(value):
+    result = int(value)
+    if result < 1:
+        raise argparse.ArgumentTypeError("expected a positive integer")
+    return result
+
+
+def output(value):
+    print(json.dumps(value, ensure_ascii=False, indent=2))
+
+
+def collect(args, db, config):
+    if args.atom:
+        papers = parse_feed(args.atom.read_bytes())
+        save_papers(db, papers)
+        return len(papers)
+    total = 0
+    for page in Arxiv().pages(config["categories"], args.days, args.limit):
+        save_papers(db, page)
+        db.commit()
+        total += len(page)
+    return total
+
+
+def ensure_week(db, args, config, today):
+    iso = today.isocalendar()
+    week = f"{iso.year}-W{iso.week:02d}"
+    if setting(db, "paused") == "1":
+        return {"week": week, "status": "paused"}
+    previous = db.execute("SELECT payload FROM recommendation WHERE week = ?", (week,)).fetchone()
+    if previous:
+        return json.loads(previous[0])
+    if not args.no_collect:
+        collect(args, db, config)
+    candidates = rank(db, config, today, args.days, 5, args.semantic)
+    candidates = candidates or rank(db, config, today, max(90, args.days), 5, args.semantic)
+    if not candidates:
+        return {"week": week, "status": "no-candidates"}
+    result = {"week": week, "status": "ready", "primary": candidates[0],
+              "alternatives": candidates[1:3], "review_candidates": candidates}
+    db.execute("INSERT OR IGNORE INTO recommendation VALUES (?, ?)", (week, json.dumps(result)))
+    return json.loads(db.execute("SELECT payload FROM recommendation WHERE week = ?", (week,)).fetchone()[0])
+
+
+def add_collection_options(parser):
+    parser.add_argument("--days", type=positive, default=30)
+    parser.add_argument("--limit", type=positive, default=1500)
+    parser.add_argument("--atom", type=Path, help="Import an arXiv Atom snapshot")
+
+
+def parser():
+    cli = argparse.ArgumentParser(prog="research", description="Local AI research reader")
+    cli.add_argument("--db", type=Path, default=Path("data/research.db"))
+    cli.add_argument("--config", type=Path)
+    commands = cli.add_subparsers(dest="command", required=True)
+    add_collection_options(commands.add_parser("collect", help="Collect arXiv version metadata"))
+    ranking = commands.add_parser("rank", help="Rank eligible local papers")
+    ranking.add_argument("--days", type=positive, default=30)
+    ranking.add_argument("--top", type=positive, default=20)
+    ranking.add_argument("--semantic", action="store_true")
+    weekly = commands.add_parser("weekly", help="Generate one recommendation per ISO week")
+    add_collection_options(weekly)
+    weekly.add_argument("--semantic", action="store_true")
+    weekly.add_argument("--no-collect", action="store_true", help="Use the existing local catalog")
+    commands.add_parser("export-markers", help="Write version metadata as JSON to stdout")
+    commands.add_parser("import-markers", help="Import version metadata as JSON").add_argument("path", type=Path)
+    status = commands.add_parser("status", help="Include or exclude a paper from future ranking")
+    status.add_argument("id")
+    status.add_argument("value", choices=("unread", "read", "skipped"))
+    commands.add_parser("pause", help="Pause weekly recommendations")
+    commands.add_parser("resume", help="Allow the next weekly recommendation")
+    return cli
+
+
+def execute(args, db, config, today):
+    match args.command:
+        case "collect":
+            return {"collected": collect(args, db, config)}
+        case "rank":
+            return rank(db, config, today, args.days, args.top, args.semantic)
+        case "weekly":
+            return ensure_week(db, args, config, today)
+        case "export-markers":
+            return {"format": 1, "versions": versions(db)}
+        case "import-markers":
+            with args.path.open(encoding="utf-8-sig") as stream:
+                snapshot = json.load(stream)
+            if not isinstance(snapshot, dict) or snapshot.get("format") != 1 or not isinstance(snapshot.get("versions"), list):
+                raise ValueError("Unsupported marker format")
+            papers = [Paper(**item) for item in snapshot["versions"]]
+            save_papers(db, papers)
+            return {"imported": len(papers)}
+        case "status":
+            get_paper(db, args.id)
+            db.execute("INSERT OR REPLACE INTO paper_state VALUES (?, ?)", (args.id, args.value))
+            return {"id": args.id, "status": args.value}
+        case "pause" | "resume":
+            db.execute("INSERT OR REPLACE INTO settings VALUES ('paused', ?)", (str(int(args.command == "pause")),))
+            return {"status": args.command}
+
+
+def main(argv=None):
+    args = parser().parse_args(argv)
+    try:
+        config = load_config(args.config)
+        today = datetime.now(ZoneInfo(config["timezone"])).date()
+        with connect(args.db) as db:
+            result = execute(args, db, config, today)
+        output(result)
+        return 0
+    except (OSError, ValueError, TypeError, KeyError, sqlite3.Error, ParseError, ZoneInfoNotFoundError) as error:
+        print(f"research: {error}", file=sys.stderr)
+        return 1

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pread"
+version = "0.1.0"
+description = "Local AI paper recommendation and reading"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["tzdata>=2025.2; platform_system == 'Windows'"]
+
+[project.optional-dependencies]
+semantic = ["sentence-transformers>=4"]
+
+[project.scripts]
+research = "pread.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["pread*"]
+
+[tool.setuptools.package-data]
+pread = ["defaults.toml"]

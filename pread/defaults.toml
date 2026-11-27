@@ -1,0 +1,30 @@
+timezone = "Asia/Shanghai"
+categories = ["cs.DC", "cs.PF", "cs.AR", "cs.LG", "cs.CL", "cs.AI", "cs.CV", "cs.NE", "cs.OS"]
+half_life_days = 30
+embedding_model = "BAAI/bge-m3"
+
+[weights]
+relevance = 0.30
+quality = 0.20
+novelty = 0.15
+reproducibility = 0.10
+freshness = 0.05
+impact = 0.05
+learning_value = 0.05
+reading_fit = 0.10
+
+[topics.ai_systems]
+weight = 1.0
+keywords = ["Mixture of Experts", "Grouped GEMM", "GPU Kernel", "FlashAttention", "Multi-head Latent Attention", "Inference Optimization", "Quantization", "Roofline"]
+
+[topics.model_architecture]
+weight = 0.9
+keywords = ["Transformer", "State Space Model", "Mamba", "Linear Attention", "Reasoning"]
+
+[topics.training]
+weight = 0.7
+keywords = ["Reinforcement Learning", "Fine-tuning", "Distributed Training", "Knowledge Distillation"]
+
+[topics.exploration]
+weight = 0.5
+keywords = ["Embodied AI", "Multimodal Learning", "World Model"]
