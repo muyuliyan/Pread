@@ -30,7 +30,9 @@ research prepare ARXIV_ID --version 1
 research reader ARXIV_ID
 ~~~
 
-也可以在阅读器里选论文并点击“准备 PDF”。原始 PDF 以版本和 SHA-256 保存。段落列表和目录可定位原文、译文及 PDF 页。公式、图表和扫描页以原版 PDF 查看。阅读进度和 Markdown 笔记保存在本地。
+从左侧论文库选择论文即可预读摘要，点击“准备 PDF”下载正文。英文原文模式支持按章节连续阅读，中英对照按当前段落对齐。左侧可以在章节和段落之间切换，也可以用顶部“目录”隐藏侧栏。底部显示页码与段落位置，Alt+左方向键或 Alt+右方向键可切换段落，A− 和 A+ 可调字号。
+
+原始 PDF 以版本和 SHA-256 保存。公式、图表和扫描页可切到 PDF 查看，内置阅读器打不开时可以交给系统默认应用或打开 arXiv 页面。阅读进度和 Markdown 笔记保存在本地。
 
 模型连接可配置 PREAD_LLM_URL（OpenAI 兼容服务的 API 基础地址，通常以 /v1 结尾）、PREAD_LLM_MODEL 和可选的 PREAD_LLM_KEY。点击“翻译当前段”或执行 research translate ARXIV_ID ANCHOR 时，当前段落发送给所配置的模型，已有译文按版本、段落内容与模型复用。
 

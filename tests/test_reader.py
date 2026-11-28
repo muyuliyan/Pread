@@ -100,7 +100,7 @@ class ReaderTests(unittest.TestCase):
         self.assertIn("16 GPUs", window.original.toPlainText())
         self.assertEqual(window.pdf.pageNavigator().currentPage(), 1)
         window.modes.setCurrentIndex(2)
-        self.assertTrue(window.original.isHidden())
+        self.assertFalse(window.original.isVisible())
         window.modes.setCurrentIndex(3)
         self.assertEqual(window.views.currentWidget(), window.pdf)
         window.lookup_window.query.setText("throughput")
@@ -115,3 +115,42 @@ class ReaderTests(unittest.TestCase):
         self.assertTrue(window.close())
         window.deleteLater()
         QTest.qWait(50)
+
+    def test_desktop_preview_and_continuous_reading(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        try:
+            from PySide6.QtTest import QTest
+            from PySide6.QtWidgets import QApplication
+            from pread.desktop import Reader
+        except ImportError:
+            self.skipTest("Qt is unavailable")
+        app = QApplication.instance() or QApplication([])
+        window = Reader(self.db_path, self.paper.id, self.paper.version)
+        window.show()
+        app.processEvents()
+        try:
+            self.assertEqual(window.original.toPlainText(), self.paper.abstract)
+            self.assertTrue(window.prepare_button.isVisible())
+            self.assertFalse(window.nav_tabs.isVisible())
+            self.assertFalse(window.translation_card.isVisible())
+
+            with connect(self.db_path) as db:
+                prepare(db, self.root, self.paper, self.source)
+                db.execute("UPDATE paragraph SET ordinal = 2 WHERE ordinal = 1")
+                db.execute(
+                    "INSERT INTO paragraph VALUES (?, ?, 1, 'p0001-002', 1, 'Introduction', ?)",
+                    (self.paper.id, self.paper.version, "Another paragraph in the same section."),
+                )
+            window.load_paper()
+            self.assertIn("GPU kernel throughput", window.original.toPlainText())
+            self.assertIn("Another paragraph", window.original.toPlainText())
+            window.move_paragraph(1)
+            self.assertEqual(window.paragraph_list.currentRow(), 1)
+            window.modes.setCurrentIndex(0)
+            self.assertEqual(window.original.toPlainText(), "Another paragraph in the same section.")
+            window.rail_toggle.click()
+            self.assertFalse(window.rail.isVisible())
+        finally:
+            window.close()
+            window.deleteLater()
+            QTest.qWait(50)
