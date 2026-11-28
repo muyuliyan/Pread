@@ -1,15 +1,19 @@
 from contextlib import redirect_stdout
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO, StringIO
+import json
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Thread
 import unittest
 
 from pread.cli import main
+from pread.model import MODEL_SETTING, Model
 from pread.reading import (
     add_note, export_notes, paragraphs, prepare, progress, save_progress, translate,
 )
-from pread.store import Paper, connect, save_papers
+from pread.store import Paper, connect, save_papers, setting
 
 try:
     import pymupdf
@@ -154,3 +158,67 @@ class ReaderTests(unittest.TestCase):
             window.close()
             window.deleteLater()
             QTest.qWait(50)
+
+    def test_searchable_library_and_model_settings(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        try:
+            from PySide6.QtTest import QTest
+            from PySide6.QtWidgets import QApplication
+            from pread.desktop import Reader
+            from pread.reader_dialogs import ModelSettings, PaperPicker
+        except ImportError:
+            self.skipTest("Qt is unavailable")
+        app = QApplication.instance() or QApplication([])
+        with connect(self.db_path) as db:
+            save_papers(db, [Paper("2601.99999", 1, "Parallel Reading", "Second summary",
+                                   "2026-01-02", "2026-01-02", ["Example Author"], [])])
+        window = Reader(self.db_path, self.paper.id, self.paper.version)
+        picker = PaperPicker(window.papers, window.paper_index, window)
+        picker.show()
+        app.processEvents()
+        picker.search.setText("example 2601.99999")
+        self.assertEqual(picker.results.count(), 1)
+        picker.accept_paper()
+        window.open_paper(picker.selected)
+        self.assertEqual(window.title.text(), "Parallel Reading")
+
+        requests = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                requests.append((self.path, self.headers.get("Authorization"), body))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"choices":[{"message":{"content":"OK"}}]}')
+
+            def log_message(self, *_):
+                pass
+
+        with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                dialog = ModelSettings(window, None)
+                dialog.endpoint.setText(f"http://127.0.0.1:{server.server_port}/v1")
+                dialog.name.setText("test-model")
+                dialog.key.setText("session-key")
+                dialog.test_connection()
+                for _ in range(100):
+                    if not window.busy:
+                        break
+                    QTest.qWait(20)
+                self.assertIn("连接成功", dialog.status.text())
+                self.assertEqual(requests[0][:2], ("/v1/chat/completions", "Bearer session-key"))
+                self.assertEqual(requests[0][2]["model"], "test-model")
+                dialog.save_values()
+                with connect(self.db_path) as db:
+                    dialog.model.save_connection(db)
+                    self.assertEqual(Model.configured(db).name, "test-model")
+                    self.assertNotIn("session-key", setting(db, MODEL_SETTING))
+            finally:
+                server.shutdown()
+                thread.join()
+                window.close()
+                window.deleteLater()
+                QTest.qWait(50)

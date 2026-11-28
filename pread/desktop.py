@@ -1,6 +1,7 @@
 import json
 from bisect import bisect_right
 from pathlib import Path
+from textwrap import shorten
 from time import monotonic
 
 from PySide6.QtCore import QObject, QPoint, QPointF, QRunnable, QThreadPool, QTimer, Qt, QUrl, Signal, Slot
@@ -10,7 +11,7 @@ from PySide6.QtGui import (
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QListWidget,
+    QApplication, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QListWidget,
     QMainWindow, QMenu, QPushButton, QStackedWidget, QStyle, QSystemTrayIcon, QTabBar,
     QTextEdit, QToolButton, QVBoxLayout, QWidget,
 )
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
 from .hotkeys import DEFAULT_KEYS, GlobalHotkeys
 from .lookup_window import LookupWindow
 from .model import Model
+from .reader_dialogs import ModelSettings, PaperPicker
 from .reader_style import READER_STYLE
 from .reading import (
     add_note, export_notes, get_document, paragraphs, pdf_path, prepare, progress, save_progress, translate,
@@ -47,8 +49,7 @@ class ReaderCombo(QComboBox):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        color = "#dce8de" if self.objectName() == "library" else "#53665c"
-        painter.setPen(QPen(QColor(color), 1.4))
+        painter.setPen(QPen(QColor("#53665c"), 1.4))
         x, y = self.width() - 13, self.height() // 2
         painter.drawLine(QPointF(x - 3.5, y - 1), QPointF(x, y + 2.5))
         painter.drawLine(QPointF(x, y + 2.5), QPointF(x + 3.5, y - 1))
@@ -70,6 +71,8 @@ class Reader(QMainWindow):
         self.anchor_positions = []
         self.following_scroll = False
         self.translation_ready = False
+        self.session_model = None
+        self.paper_index = -1
         config = config or {}
         self.embedding_model = config.get("embedding_model", "BAAI/bge-m3")
         self.lookup_window = LookupWindow(self)
@@ -89,10 +92,8 @@ class Reader(QMainWindow):
         self.original.verticalScrollBar().valueChanged.connect(lambda _: self.scroll_pause.start())
         self.outline.currentRowChanged.connect(self.jump_section)
         self.paragraph_list.currentRowChanged.connect(self.show_paragraph)
-        self.library.currentIndexChanged.connect(self.open_paper)
         self.modes.currentChanged.connect(self.change_mode)
-        self.populate_library(db_path, paper_id, version, today)
-        self.open_paper(self.library.currentIndex())
+        self.open_paper(self.populate_library(db_path, paper_id, version, today))
         self.setup_desktop_actions(config.get("hotkeys", {}))
 
     @staticmethod
@@ -133,12 +134,19 @@ class Reader(QMainWindow):
         navigation.setSpacing(12)
         navigation.addWidget(self.label("Pread", "brand"))
         navigation.addSpacing(6)
-        navigation.addWidget(self.label("论文库", "rail-label"))
-        self.library = ReaderCombo()
-        self.library.setObjectName("library")
-        self.library.setAccessibleName("选择论文")
-        self.library.setMinimumContentsLength(1)
-        self.library.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        navigation.addWidget(self.label("当前论文", "rail-label"))
+        active = QWidget()
+        active.setObjectName("active-paper")
+        active_layout = QVBoxLayout(active)
+        active_layout.setContentsMargins(12, 10, 12, 10)
+        active_layout.setSpacing(6)
+        self.active_title = self.label("", "active-title")
+        self.active_title.setWordWrap(True)
+        self.active_details = self.label("", "rail-label")
+        active_layout.addWidget(self.active_title)
+        active_layout.addWidget(self.active_details)
+        navigation.addWidget(active)
+        self.library = self.button("切换论文  ›", self.choose_paper, "paper-switch", "打开论文库（Ctrl+O）")
         navigation.addWidget(self.library)
         navigation.addSpacing(12)
         self.nav_tabs = QTabBar()
@@ -180,6 +188,8 @@ class Reader(QMainWindow):
         self.rail_toggle.setCheckable(True)
         self.rail_toggle.setChecked(True)
         toolbar.addWidget(self.rail_toggle)
+        self.picker_button = self.button("论文", self.choose_paper, tip="打开论文库（Ctrl+O）")
+        toolbar.addWidget(self.picker_button)
         self.modes = QTabBar()
         self.modes.setAccessibleName("阅读模式")
         self.modes.setExpanding(False)
@@ -192,6 +202,8 @@ class Reader(QMainWindow):
         toolbar.addWidget(self.button("A−", lambda: self.resize_type(-1), tip="缩小正文"))
         toolbar.addWidget(self.button("A+", lambda: self.resize_type(1), tip="放大正文"))
         toolbar.addWidget(self.button("查询", self.open_lookup))
+        self.model_button = self.button("模型", self.configure_model, tip="配置翻译和问答使用的模型")
+        toolbar.addWidget(self.model_button)
         self.notes_button = QToolButton()
         self.notes_button.setText("笔记")
         self.notes_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -283,7 +295,8 @@ class Reader(QMainWindow):
         self.timer_button = self.button("暂停", self.toggle_timer, tip="暂停阅读计时")
         footer.addWidget(self.timer_button)
         for key, action in (("Alt+Left", lambda: self.move_paragraph(-1)),
-                            ("Alt+Right", lambda: self.move_paragraph(1))):
+                            ("Alt+Right", lambda: self.move_paragraph(1)),
+                            ("Ctrl+O", self.choose_paper)):
             shortcut = QShortcut(QKeySequence(key), self)
             shortcut.activated.connect(action)
 
@@ -321,14 +334,40 @@ class Reader(QMainWindow):
             ordered.insert(0, (chosen, ""))
         featured = {(paper.id, paper.version) for paper, _ in ordered}
         ordered.extend((paper, "") for paper in papers if (paper.id, paper.version) not in featured)
-        self.library.blockSignals(True)
-        for paper, label in ordered:
-            prefix = f"{label} · " if label else ""
-            self.library.addItem(f"{prefix}{paper.title} · v{paper.version}", paper)
-            self.library.setItemData(self.library.count() - 1, label, Qt.ItemDataRole.UserRole + 1)
+        self.papers = ordered
         if chosen is not None:
-            self.library.setCurrentIndex(next(index for index, (paper, _) in enumerate(ordered) if paper == chosen))
-        self.library.blockSignals(False)
+            return next(index for index, (paper, _) in enumerate(ordered) if paper == chosen)
+        return 0 if ordered else -1
+
+    def choose_paper(self):
+        if self.busy:
+            return
+        dialog = PaperPicker(self.papers, self.paper_index, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected != self.paper_index:
+            self.open_paper(dialog.selected)
+        dialog.deleteLater()
+
+    def current_model(self):
+        if self.session_model is not None:
+            return self.session_model
+        with connect(self.db_path) as db:
+            return Model.configured(db)
+
+    def configure_model(self):
+        if self.busy:
+            return
+        try:
+            configured = self.current_model()
+        except ValueError:
+            configured = None
+        dialog = ModelSettings(self, configured)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            with connect(self.db_path) as db:
+                dialog.model.save_connection(db)
+            self.session_model = dialog.model
+            if self.modes.currentIndex() in (0, 2):
+                self.refresh_translation(self.current_passage())
+            self.statusBar().showMessage(f"已保存模型 · {self.session_model.name}", 5000)
 
     def setup_desktop_actions(self, keys):
         app = QApplication.instance()
@@ -391,10 +430,10 @@ class Reader(QMainWindow):
             self.lookup_window.explain()
 
     def locate(self, source):
-        for index in range(self.library.count()):
-            paper = self.library.itemData(index)
+        for index, (paper, _) in enumerate(self.papers):
             if (paper.id, paper.version) == (source["id"], source["version"]):
-                self.library.setCurrentIndex(index)
+                if index != self.paper_index:
+                    self.open_paper(index)
                 for row, paragraph in enumerate(self.rows):
                     if paragraph["anchor"] == source["anchor"]:
                         self.paragraph_list.setCurrentRow(row)
@@ -480,7 +519,8 @@ class Reader(QMainWindow):
 
     def open_paper(self, index):
         self.flush_progress()
-        self.paper = self.library.itemData(index) if index >= 0 else None
+        self.paper_index = index
+        self.paper = self.papers[index][0] if index >= 0 else None
         self.started = monotonic()
         self.load_paper()
 
@@ -555,7 +595,9 @@ class Reader(QMainWindow):
         }.get(section, section)
 
     def refresh_paper_header(self):
-        self.library.setToolTip(self.paper.title if self.paper else "")
+        self.active_title.setText(shorten(self.paper.title, width=76, placeholder="…") if self.paper else "暂无论文")
+        self.active_title.setToolTip(self.paper.title if self.paper else "")
+        self.active_details.setText(f"arXiv:{self.paper.id}v{self.paper.version}" if self.paper else "")
         self.prepare_button.setVisible(self.paper is not None and self.local_pdf is None)
         self.prepare_button.setText("准备 PDF")
         self.prepare_button.setToolTip("下载并解析此版本的 PDF")
@@ -570,7 +612,7 @@ class Reader(QMainWindow):
             self.state.clear()
             return
         paper = self.paper
-        ranking = self.library.currentData(Qt.ItemDataRole.UserRole + 1)
+        ranking = self.papers[self.paper_index][1]
         self.metadata.setText("  ·  ".join(part for part in
                               (ranking, f"arXiv:{paper.id}v{paper.version}", paper.published) if part))
         self.title.setText(paper.title)
@@ -669,12 +711,12 @@ class Reader(QMainWindow):
         cached = None
         try:
             if row:
-                model = Model.from_env()
-                self.translation_ready = True
                 with connect(self.db_path) as db:
+                    model = self.session_model or Model.configured(db)
+                    self.translation_ready = True
                     cached = translate(db, self.paper, row, model, cached_only=True)
         except ValueError:
-            hint = "在启动环境中设置 PREAD_LLM_URL 和 PREAD_LLM_MODEL 后，即可在这里翻译。"
+            hint = "点击顶部「模型」，填写服务地址和模型 ID，即可翻译。"
         self.translate_button.setEnabled(self.translation_ready and not self.busy)
         self.format_prose(self.translated, [cached or (hint if row else "暂无可翻译内容。")], hint=not cached)
 
@@ -709,6 +751,8 @@ class Reader(QMainWindow):
             return False
         self.busy = True
         self.library.setEnabled(False)
+        self.picker_button.setEnabled(False)
+        self.model_button.setEnabled(False)
         self.prepare_button.setEnabled(False)
         self.translate_button.setEnabled(False)
         self.statusBar().showMessage("后台处理中…")
@@ -723,6 +767,8 @@ class Reader(QMainWindow):
     def finish_job(self, result):
         self.busy = False
         self.library.setEnabled(True)
+        self.picker_button.setEnabled(True)
+        self.model_button.setEnabled(True)
         self.prepare_button.setEnabled(True)
         self.translate_button.setEnabled(self.translation_ready and self.current_passage() is not None)
         succeeded, data = result
@@ -762,7 +808,7 @@ class Reader(QMainWindow):
 
         def operation():
             with connect(self.db_path) as db:
-                return translate(db, paper, row, Model.from_env())
+                return translate(db, paper, row, self.session_model or Model.configured(db))
 
         def completed(text):
             current = self.current_passage()

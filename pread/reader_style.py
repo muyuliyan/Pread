@@ -6,8 +6,8 @@ QWidget#rail { background: #192d26; }
 QLabel#brand { color: #f4f5ed; font-size: 27px; font-weight: 700; }
 QLabel#rail-label { color: #a5beb2; font-size: 12px; font-weight: 600; }
 QLabel#rail-hint { color: #a5beb2; }
-QComboBox#library { background: #263e34; border: 1px solid #41594d; color: #f6f7f1; }
-QComboBox#library:hover { border-color: #81a995; }
+QWidget#active-paper { background: #263e34; border: 1px solid #41594d; border-radius: 8px; }
+QLabel#active-title { color: #f3f7f1; font-weight: 600; }
 QComboBox QAbstractItemView { background: #fffefa; color: #202e29; padding: 4px; }
 QListWidget#outline { background: transparent; border: 0; color: #e1eae0; outline: 0; }
 QListWidget#outline::item { padding: 9px 10px; border-radius: 6px; }
@@ -37,6 +37,9 @@ QPushButton#primary:hover { background: #174b37; }
 QPushButton#primary:disabled { background: #e3ede4; border-color: #d7e4d9; color: #546e60; }
 QPushButton#link { background: transparent; border-color: transparent; color: #245b45; }
 QPushButton#link:hover { background: #e9f2e8; }
+QPushButton#paper-switch { background: #304b3e; border-color: #506b5c; color: #eff8f1; text-align: left; }
+QPushButton#paper-switch:hover { background: #3b5c4a; border-color: #81a995; }
+QPushButton#paper-switch:disabled { color: #a5beb2; }
 QTabBar::tab { background: #f0f2ea; color: #43564b; border: 1px solid #e0e6db;
   padding: 7px 12px; min-height: 18px; }
 QTabBar::tab:first { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }
@@ -56,6 +59,8 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: trans
 QStatusBar { color: #52685b; background: #fcfcf7; }
 QStatusBar::item { border: 0; }
 QDialog { background: #f6f6f0; }
+QLabel#dialog-title { color: #162922; font-size: 24px; font-weight: 700; }
+QListWidget#paper-results { background: transparent; border: 0; padding: 0; outline: 0; }
 QLineEdit, QTextBrowser, QListWidget { background: #fffefa; border: 1px solid #dfe5da;
   border-radius: 6px; padding: 6px; selection-background-color: #dcece0; selection-color: #193c2b; }
 """

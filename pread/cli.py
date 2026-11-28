@@ -110,7 +110,7 @@ def ensure_week(db, args, config, today):
     if use_reranker:
         candidates = rerank(candidates, config)[:5]
     if getattr(args, "review", False):
-        candidates = review_candidates(db, args.db.parent, candidates, config, Model.from_env())
+        candidates = review_candidates(db, args.db.parent, candidates, config, Model.configured(db))
         if all("assessment_error" in card for card in candidates):
             return {"week": week, "status": "review-unavailable", "review_candidates": candidates}
     result = {"week": week, "status": "ready", "primary": candidates[0],
@@ -249,7 +249,7 @@ def execute(args, db, config, today):
             available = {row["anchor"]: row for row in paragraphs(db, paper)}
             if missing := set(args.anchors) - available.keys():
                 raise ValueError(f"Unknown paragraph anchors: {', '.join(sorted(missing))}")
-            model = Model.from_env()
+            model = Model.configured(db)
             results = {}
             for anchor in args.anchors:
                 results[anchor] = translate(db, paper, available[anchor], model)
@@ -273,7 +273,7 @@ def execute(args, db, config, today):
             if args.version and not args.paper:
                 raise ValueError("--version requires --paper")
             paper = get_paper(db, args.paper, args.version) if args.paper else None
-            result = answer(db, args.query, paper, model=Model.from_env if args.explain else None,
+            result = answer(db, args.query, paper, model=(lambda: Model.configured(db)) if args.explain else None,
                             model_name=config["embedding_model"] if args.semantic else None, limit=min(args.top, 50))
             if args.external and result["status"] == "insufficient-evidence":
                 matches = external_search(args.query, args.top)
@@ -284,7 +284,7 @@ def execute(args, db, config, today):
             return external_search(args.query, args.top)
         case "review":
             paper = get_paper(db, args.id, args.version)
-            return review(db, paper, Model.from_env())
+            return review(db, paper, Model.configured(db))
         case "feedback":
             record_feedback(db, args.week, args.id, args.minutes, args.relevance,
                             args.understanding, args.quality, args.completed, args.reason)

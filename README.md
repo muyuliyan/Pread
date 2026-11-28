@@ -30,11 +30,11 @@ research prepare ARXIV_ID --version 1
 research reader ARXIV_ID
 ~~~
 
-从左侧论文库选择论文即可预读摘要，点击“准备 PDF”下载正文。英文原文模式支持按章节连续阅读，中英对照按当前段落对齐。左侧可以在章节和段落之间切换，也可以用顶部“目录”隐藏侧栏。底部显示页码与段落位置，Alt+左方向键或 Alt+右方向键可切换段落，A− 和 A+ 可调字号。
+顶部“论文”或 Ctrl+O 打开论文库，可以按标题、作者或 arXiv ID 搜索。本周推荐排在前面。打开论文后即可预读摘要，点击“准备 PDF”下载正文。英文原文模式支持按章节连续阅读，中英对照按当前段落对齐。左侧可以在章节和段落之间切换，也可以用顶部“目录”隐藏侧栏。底部显示页码与段落位置，Alt+左方向键或 Alt+右方向键可切换段落，A− 和 A+ 可调字号。
 
 原始 PDF 以版本和 SHA-256 保存。公式、图表和扫描页可切到 PDF 查看，内置阅读器打不开时可以交给系统默认应用或打开 arXiv 页面。阅读进度和 Markdown 笔记保存在本地。
 
-模型连接可配置 PREAD_LLM_URL（OpenAI 兼容服务的 API 基础地址，通常以 /v1 结尾）、PREAD_LLM_MODEL 和可选的 PREAD_LLM_KEY。点击“翻译当前段”或执行 research translate ARXIV_ID ANCHOR 时，当前段落发送给所配置的模型，已有译文按版本、段落内容与模型复用。
+点击顶部“模型”填写 OpenAI 兼容的 API 基础地址（通常以 /v1 结尾）和服务商提供的模型 ID，再测试连接。地址和模型 ID 保存到当前论文库，界面输入的 API Key 只在本次运行中使用。也可从启动环境提供 PREAD_LLM_URL、PREAD_LLM_MODEL 和 PREAD_LLM_KEY。已有论文库设置时优先使用该地址和模型 ID，环境中的 Key 仅用于同一地址。点击“翻译当前段”或执行 research translate ARXIV_ID ANCHOR 时，当前段落发送给所配置的模型，已有译文按版本、段落内容与模型复用。
 
 ## 即时查询
 

@@ -6,7 +6,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QDesktopServices
 
 from .knowledge import answer
-from .model import Model
 from .reading import TRANSLATE_PROMPT
 from .store import connect
 
@@ -69,8 +68,8 @@ class LookupWindow(QDialog):
 
         def work():
             if mode == "translation":
-                return {"answer": Model.from_env().complete(TRANSLATE_PROMPT, query), "sources": []}
-            model = Model.from_env if mode == "explain" else None
+                return {"answer": self.reader.current_model().complete(TRANSLATE_PROMPT, query), "sources": []}
+            model = self.reader.current_model if mode == "explain" else None
             with connect(db_path) as db:
                 return answer(db, query, paper, model=model, model_name=model_name)
 
